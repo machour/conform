@@ -140,17 +140,25 @@ export function useFormContext<Schema extends Record<string, any>, FormError>(
 	return form as unknown as FormContext<Schema, FormError, unknown>;
 }
 
-export function useFormState<FormError>(
+export function useFormSubscription<FormError>(
 	form: FormContext<any, FormError>,
-	subjectRef?: MutableRefObject<SubscriptionSubject>,
-): FormState<FormError> {
+	initialSubject: SubscriptionSubject = {},
+): MutableRefObject<SubscriptionSubject> {
+	const subjectRef = useRef(initialSubject);
 	const subscribe = useCallback(
 		(callback: () => void) =>
 			form.subscribe(callback, () => subjectRef?.current),
 		[form, subjectRef],
 	);
 
-	return useSyncExternalStore(subscribe, form.getState, form.getState);
+	// Subscribe to the form context based on the subject
+	useSyncExternalStore(subscribe, form.getState, form.getState);
+
+	// Reset the subject everytime the component is rerendered
+	// This let us subscribe to data used in the last render only
+	subjectRef.current = initialSubject;
+
+	return subjectRef;
 }
 
 export function FormProvider(props: {
@@ -180,18 +188,6 @@ export function FormStateInput(props: { formId?: string }): React.ReactElement {
 	);
 }
 
-export function useSubjectRef(
-	initialSubject: SubscriptionSubject = {},
-): MutableRefObject<SubscriptionSubject> {
-	const subjectRef = useRef(initialSubject);
-
-	// Reset the subject everytime the component is rerendered
-	// This let us subscribe to data used in the last render only
-	subjectRef.current = initialSubject;
-
-	return subjectRef;
-}
-
 export function updateSubjectRef(
 	ref: MutableRefObject<SubscriptionSubject>,
 	name: string,
@@ -214,8 +210,9 @@ export function getMetadata<
 	FormSchema extends Record<string, any>,
 >(
 	formId: FormId<FormSchema, FormError>,
-	state: FormState<FormError>,
+	context: FormContext<FormSchema, FormError, any>,
 	subjectRef: MutableRefObject<SubscriptionSubject>,
+	state: FormState<FormError>,
 	name: FieldName<Schema, FormSchema, FormError> = '',
 ): Metadata<Schema, FormSchema, FormError> {
 	const id = name ? `${formId}-${name}` : formId;
@@ -264,7 +261,7 @@ export function getMetadata<
 					new Proxy({} as any, {
 						get(target, key, receiver) {
 							if (typeof key === 'string') {
-								return getFieldMetadata(formId, state, subjectRef, name, key);
+								return getFieldMetadata(formId, context, subjectRef, name, key);
 							}
 
 							return Reflect.get(target, key, receiver);
@@ -305,7 +302,7 @@ export function getFieldMetadata<
 	FormError,
 >(
 	formId: FormId<FormSchema, FormError>,
-	state: FormState<FormError>,
+	context: FormContext<FormSchema, FormError, any>,
 	subjectRef: MutableRefObject<SubscriptionSubject>,
 	prefix = '',
 	key?: string | number,
@@ -314,10 +311,12 @@ export function getFieldMetadata<
 		typeof key === 'undefined'
 			? prefix
 			: formatPaths([...getPaths(prefix), key]);
-	const metadata = getMetadata(formId, state, subjectRef, name);
 
 	return new Proxy({} as any, {
 		get(_, key, receiver) {
+			const state = context.getState();
+			const metadata = getMetadata(formId, context, subjectRef, state, name);
+
 			switch (key) {
 				case 'formId':
 					return formId;
@@ -345,7 +344,7 @@ export function getFieldMetadata<
 						return Array(initialValue.length)
 							.fill(0)
 							.map((_, index) =>
-								getFieldMetadata(formId, state, subjectRef, name, index),
+								getFieldMetadata(formId, context, subjectRef, name, index),
 							);
 					};
 				}
@@ -362,15 +361,15 @@ export function getFormMetadata<
 	FormValue = Schema,
 >(
 	formId: FormId<Schema, FormError>,
-	state: FormState<FormError>,
-	subjectRef: MutableRefObject<SubscriptionSubject>,
 	context: FormContext<Schema, FormError, FormValue>,
+	subjectRef: MutableRefObject<SubscriptionSubject>,
 	noValidate: boolean,
 ): FormMetadata<Schema, FormError> {
-	const metadata = getMetadata(formId, state, subjectRef);
-
 	return new Proxy({} as any, {
 		get(_, key, receiver) {
+			const state = context.getState();
+			const metadata = getMetadata(formId, context, subjectRef, state);
+
 			switch (key) {
 				case 'context':
 					return {
