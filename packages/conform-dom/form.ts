@@ -225,6 +225,7 @@ export type FormContext<
 	onInput(event: Event): void;
 	onBlur(event: Event): void;
 	onUpdate(options: Partial<FormOptions<Schema, FormError, FormValue>>): void;
+	observe(): () => void;
 	subscribe(
 		callback: () => void,
 		getSubject?: () => SubscriptionSubject | undefined,
@@ -541,44 +542,6 @@ export function createFormContext<
 	let latestOptions = options;
 	let meta = createFormMeta(options);
 	let state = createFormState(meta);
-
-	if (typeof MutationObserver !== 'undefined') {
-		console.log('MutationObserver is supported');
-		let observer = new MutationObserver((mutations) => {
-			const form = getFormElement();
-
-			if (!form) {
-				return;
-			}
-
-			for (const mutation of mutations) {
-				const nodes =
-					mutation.type === 'childList'
-						? [...mutation.addedNodes, ...mutation.removedNodes]
-						: [mutation.target];
-
-				for (const node of nodes) {
-					const element = isFieldElement(node)
-						? node
-						: node instanceof HTMLElement
-						? node.querySelector<FieldElement>('input,select,textarea')
-						: null;
-
-					if (element?.form === form) {
-						updateFormValue(form);
-						return;
-					}
-				}
-			}
-		});
-
-		observer.observe(document, {
-			subtree: true,
-			childList: true,
-			attributes: true,
-			attributeFilter: ['form', 'name'],
-		});
-	}
 
 	function getFormElement(): HTMLFormElement | null {
 		return document.forms.namedItem(latestOptions.formId);
@@ -990,6 +953,47 @@ export function createFormContext<
 		});
 	}
 
+	function observe() {
+		const observer = new MutationObserver((mutations) => {
+			const form = getFormElement();
+
+			if (!form) {
+				return;
+			}
+
+			for (const mutation of mutations) {
+				const nodes =
+					mutation.type === 'childList'
+						? [...mutation.addedNodes, ...mutation.removedNodes]
+						: [mutation.target];
+
+				for (const node of nodes) {
+					const element = isFieldElement(node)
+						? node
+						: node instanceof HTMLElement
+						? node.querySelector<FieldElement>('input,select,textarea')
+						: null;
+
+					if (element?.form === form) {
+						updateFormValue(form);
+						return;
+					}
+				}
+			}
+		});
+
+		observer.observe(document, {
+			subtree: true,
+			childList: true,
+			attributes: true,
+			attributeFilter: ['form', 'name'],
+		});
+
+		return () => {
+			observer.disconnect();
+		};
+	}
+
 	return {
 		get formId() {
 			return latestOptions.formId;
@@ -1008,5 +1012,6 @@ export function createFormContext<
 		subscribe,
 		getState,
 		getSerializedState,
+		observe,
 	};
 }
